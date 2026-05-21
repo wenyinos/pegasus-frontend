@@ -11,6 +11,8 @@ env:
 jobs:
   android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -83,12 +85,17 @@ jobs:
           name: ${{ matrix.name }}
           path: dist
 
+      - name: Get date
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
+        id: date
+        run: echo "tag=v$(date +%Y%m%d)" >> $GITHUB_OUTPUT && echo "name=Pegasus $(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+
       - name: Create Release
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/master'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v$(date +%Y%m%d)
-          name: Pegasus $(date +%Y-%m-%d)
+          tag_name: ${{ steps.date.outputs.tag }}
+          name: ${{ steps.date.outputs.name }}
           draft: false
           prerelease: false
           files: dist/*.apk
