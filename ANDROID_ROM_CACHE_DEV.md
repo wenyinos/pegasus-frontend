@@ -328,3 +328,167 @@ HEADERS += ModelLogSink.h
 ```xml
 <file>menu/logs/LogScreen.qml</file>
 ```
+
+---
+
+# Android 游戏进程退出检测
+
+## 问题
+
+Android 上使用 `startActivity()` 启动模拟器是异步的，Java 立即返回。模拟器退出时 Pegasus 无法感知，导致前端卡死等待。
+
+## 解决方案
+
+使用 `startActivityForResult()` + `onActivityResult()` 回调模式，模拟器退出时系统自动回调。
+
+### 1. MainActivity.java
+
+```java
+private static final int REQUEST_LAUNCH_GAME = 1001;
+
+// 启动时使用 startActivityForResult
+m_self.startActivityForResult(intent, REQUEST_LAUNCH_GAME);
+
+// 回调
+@Override
+protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    if (requestCode == REQUEST_LAUNCH_GAME) {
+        onGameProcessFinished();  // JNI 回调
+    }
+}
+
+private static native void onGameProcessFinished();
+```
+
+### 2. AndroidHelpers.h - GameProcessNotifier 单例
+
+```cpp
+namespace android {
+class GameProcessNotifier : public QObject {
+    Q_OBJECT
+public:
+    static GameProcessNotifier* instance();
+    void notifyFinished();
+signals:
+    void gameProcessFinished();
+};
+}
+```
+
+### 3. AndroidHelpers.cpp - JNI 动态注册
+
+```cpp
+static void nativeOnGameProcessFinished(JNIEnv *env, jclass clazz) {
+    android::GameProcessNotifier::instance()->notifyFinished();
+}
+
+static JNINativeMethod methods[] = {
+    {"onGameProcessFinished", "()V", (void*)nativeOnGameProcessFinished}
+};
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    // 注册 native 方法
+}
+```
+
+### 4. ProcessLauncher.cpp - 处理完成信号
+
+```cpp
+void ProcessLauncher::onAndroidGameProcessFinished() {
+    afterRun();
+    emit processFinished();
+}
+```
+
+### 5. Backend.cpp - 连接信号
+
+```cpp
+QObject::connect(android::GameProcessNotifier::instance(),
+    &android::GameProcessNotifier::gameProcessFinished,
+    m_launcher, &ProcessLauncher::onAndroidGameProcessFinished);
+```
+
+---
+
+# 游戏列表缓存功能
+
+## 功能概述
+
+首次启动时扫描所有 provider 构建游戏列表并缓存到 SQLite。后续启动若游戏目录和 Provider 配置未变化，直接从缓存加载，跳过全量扫描。
+
+## 架构
+
+```
+ProviderManager::run()
+    ↓
+读取 game_dirs.txt → 计算 config_hash
+    ↓
+GameCache::isCacheValid(game_dirs, config_hash)
+    ├─ 有效 → GameCache::load() → 返回缓存数据
+    └─ 无效 → 执行 provider 扫描 → GameCache::save()
+```
+
+## 新增文件
+
+### GameCache.h/cpp
+
+SQLite 缓存实现，位于 `src/backend/providers/game_cache/`。
+
+**数据库表：**
+- `collections` - 合集数据（name UNIQUE）
+- `games` - 游戏数据（title, 属性, assets_json, extra_json）
+- `game_files` - 游戏文件（game_id 外键）
+- `collection_games` - 合集-游戏关联
+- `dir_fingerprints` - 目录指纹 + config_hash
+
+**核心方法：**
+```cpp
+bool isCacheValid(const QStringList& game_dirs, const QString& config_hash) const;
+bool load(std::vector<Collection*>& collections, std::vector<Game*>& games);
+void save(const std::vector<Collection*>&, const std::vector<Game*>&,
+          const QStringList& game_dirs, const QString& config_hash);
+```
+
+### game_cache.pri
+
+qmake 构建文件。
+
+## 修改文件
+
+### Assets.h
+
+新增公开访问器用于序列化：
+```cpp
+const HashMap<AssetType, QStringList, EnumHash>& allAssets() const;
+```
+
+### ProviderManager.cpp
+
+集成缓存逻辑：
+- `read_game_dirs()` - 从 AppSettings 读取配置的游戏目录
+- `compute_config_hash()` - SHA256(game_dirs + enabled_providers)
+- run() 中：检查缓存 → 加载或扫描 → 保存缓存
+
+### providers/CMakeLists.txt / providers.pri
+
+注册 GameCache 源文件。
+
+## 缓存失效条件
+
+1. `gamecache.db` 文件不存在
+2. 任何游戏目录的 `lastModified` 时间戳变化
+3. 游戏目录列表变化（增删目录）
+4. config_hash 变化（启用/禁用 Provider）
+
+## 唯一键策略
+
+游戏使用 `title + \0 + first_file_path` 作为唯一键，处理同名游戏场景。
+
+合集使用 `INSERT OR REPLACE` 处理潜在的名称冲突。
+
+## 线程安全
+
+- GameCache 在 QtConcurrent 线程中使用
+- SqliteDb 每次操作创建新连接，线程安全
+- QObject 对象在主线程创建，信号通过 AutoConnection 自动排队
