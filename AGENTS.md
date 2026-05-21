@@ -62,7 +62,7 @@ CMake produces these targets (in dependency order):
 ```
 src/
   app/              # main.cpp → pegasus-fe binary
-    main.cpp        # CLI args: --portable, --silent, --kiosk, --disable-menu-*, --disable-gamepad-autoconfig
+    main.cpp        # CLI args: --portable, --silent, --kiosk, --disable-menu-{reboot,shutdown,suspend,appclose,settings}, --disable-gamepad-autoconfig
   backend/          # Static lib pegasus-backend
     Backend.cpp     # Main orchestrator
     FrontendLayer.cpp  # QML ↔ C++ bridge (dynamic reload on game launch)
@@ -72,6 +72,8 @@ src/
     Log.cpp              # Logging
     Paths.cpp            # Filesystem paths
     PegasusAssets.cpp    # Asset loading
+    ModelLogSink.cpp     # Log → LogModel bridge
+    CliArgs.h            # CLI argument struct
     model/               # QML-exposed data models
       Api.cpp            # Public QML interface (ApiObject)
       gaming/            # Game, Collection, GameFile + list models
@@ -84,8 +86,8 @@ src/
     platform/         # PowerCommands_* (per-platform), TerminalKbd
       AndroidHelpers.h     # Android storage, SAF, JNI
       AndroidAppIconProvider.h  # Android app icons
-    types/            # Enums: AssetType(21), GamepadKeyId, GamepadButton(17), GamepadAxis(5),
-                      #        KeyEventType(13), AppCloseType(4)
+    types/            # Enums: AssetType(21), GamepadKeyId(13), GamepadButton(18), GamepadAxis(5),
+                      #        KeyEvent(13), AppCloseType(4)
     imggen/           # BlurhashProvider (QQuickImageProvider for placeholder images)
     utils/            # StringHelpers, PathTools, SqliteDb, FolderListModel,
                       # CommandTokenizer, KeySequenceTools, DiskCachedNAM,
@@ -95,10 +97,11 @@ src/
     main.qml          # Root QML (Window, Theme Loader, Menu, Splash)
     MenuLayer.qml     # Main menu
     SplashLayer.qml   # Splash screen
-    dialogs/          # GenericOkDialog, RebootDialog, ShutdownDialog, MultifileSelector, Shade
-    menu/             # MainMenuPanel, SettingsMain, GameDirEditor, GamepadEditor, KeyEditor, ProviderEditor
+    dialogs/          # GenericOkDialog, GenericOkCancelDialog, RebootDialog, ShutdownDialog, MultifileSelector, Shade
+    menu/             # MainMenuPanel, SettingsMain, GameDirEditor, GamepadEditor, KeyEditor, ProviderEditor,
+                      # HelpScreen, LogScreen, AndroidSafEditor (+ subdirs: common/, settings/, gamepad/, keyeditor/, gamedireditor/)
     messages/         # Error, NoGamesError, ThemeError
-    assets/           # Gamepad button images (x360, ps), logo, progress bar
+    assets/           # Gamepad button images (x360), logo, progress bar
     frontend.qrc      # QML resource bundle — MUST be edited when adding new QML files
   qmlutils/         # QML utility components
     HorizontalSwipeArea.qml  # Horizontal swipe gesture detection
@@ -126,7 +129,10 @@ Platform-conditional:
 - `launchbox/`, `playnite/` — Windows only (`PEGASUS_ON_WINDOWS`)
 - `es2/` (EmulationStation) — Windows, macOS, X11, or EGLFS only
 - `android_apps/` — Android only
-- All others (`pegasus_metadata`, `steam`, `gog`, `lutris`, `logiqx`, `skraper`, `pegasus_favorites`, `pegasus_playtime`, `pegasus_media`) — all platforms (`PLATFORMS ALL`)
+- `steam/` — Windows, macOS, X11
+- `gog/` — Windows, X11
+- `lutris/` — X11 only
+- All others (`pegasus_metadata`, `logiqx`, `skraper`, `pegasus_favorites`, `pegasus_playtime`, `pegasus_media`) — all platforms (`PLATFORMS ALL`)
 
 Internal providers (pegasus_*) are not listed in the optional providers printout.
 
