@@ -169,7 +169,7 @@ Backend::Backend(const CliArgs& args)
     m_api_private = new model::Internal(args);
 
     // Add log sink to forward messages to QML
-    Log::addSink(std::make_unique<ModelLogSink>(m_api_private->logPtr()));
+    Log::addSink(std::unique_ptr<ModelLogSink>(new ModelLogSink(m_api_private->logPtr())));
     m_frontend = new FrontendLayer(m_api_public, m_api_private);
     m_launcher = new ProcessLauncher();
     m_providerman = new ProviderManager();
