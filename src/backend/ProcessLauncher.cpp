@@ -369,7 +369,10 @@ void ProcessLauncher::onAndroidGameProcessFinished()
     Log::info(SEPARATOR);
     Log::info(LOGMSG("Game process finished (Android)"));
     afterRun();
-    emit processFinished();
+    // Don't emit processFinished() here — it will be emitted by
+    // onTeardownComplete() after the QML engine is fully destroyed.
+    // Emitting it here causes rebuild() to run before the old engine
+    // is destroyed, leading to a crash.
 #endif
 }
 

@@ -18,34 +18,20 @@
 #include "GameCache.h"
 
 #include "Log.h"
-#include "Paths.h"
 #include "model/gaming/Assets.h"
 #include "model/gaming/Collection.h"
 #include "model/gaming/Game.h"
 #include "model/gaming/GameFile.h"
-#include "utils/SqliteDb.h"
 
-#include <QDateTime>
+#include <QDate>
 #include <QDir>
-#include <QFileInfo>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSqlError>
-#include <QSqlQuery>
-#include <QVariant>
 
 
 namespace {
-constexpr const char* CONFIG_HASH_KEY = "__config_hash__";
-
-void print_query_error(const QString& log_tag, const QSqlQuery& query)
-{
-    const auto error = query.lastError();
-    if (error.isValid())
-        Log::warning(log_tag, error.text());
-}
-
 QString asset_type_to_string(AssetType type)
 {
     switch (type) {
@@ -98,11 +84,11 @@ AssetType string_to_asset_type(const QString& str)
     return AssetType::UNKNOWN;
 }
 
-QString assets_to_json(const model::Assets& assets)
+QJsonObject assets_to_json(const model::Assets& assets)
 {
     const auto& all = assets.allAssets();
     if (all.empty())
-        return QString();
+        return {};
 
     QJsonObject obj;
     for (const auto& pair : all) {
@@ -114,7 +100,7 @@ QString assets_to_json(const model::Assets& assets)
             arr.append(uri);
         obj[key] = arr;
     }
-    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
+    return obj;
 }
 
 void json_to_assets(const QJsonObject& obj, model::Assets& assets)
@@ -129,7 +115,6 @@ void json_to_assets(const QJsonObject& obj, model::Assets& assets)
     }
 }
 
-// Unique key for a game: title + first file path to handle duplicate titles
 QString game_unique_key(const model::Game* game)
 {
     if (game->filesModel() && !game->filesModel()->entries().empty()) {
@@ -139,416 +124,247 @@ QString game_unique_key(const model::Game* game)
     return game->title();
 }
 
+QJsonObject game_to_json(const model::Game* game)
+{
+    QJsonObject obj;
+    obj[QLatin1String("key")] = game_unique_key(game);
+    obj[QLatin1String("title")] = game->title();
+    obj[QLatin1String("sort_by")] = game->sortBy();
+    obj[QLatin1String("summary")] = game->summary();
+    obj[QLatin1String("description")] = game->description();
+    obj[QLatin1String("developers")] = game->developerListConst().join(QLatin1Char(','));
+    obj[QLatin1String("publishers")] = game->publisherListConst().join(QLatin1Char(','));
+    obj[QLatin1String("genres")] = game->genreListConst().join(QLatin1Char(','));
+    obj[QLatin1String("tags")] = game->tagListConst().join(QLatin1Char(','));
+    obj[QLatin1String("player_count")] = game->playerCount();
+    obj[QLatin1String("rating")] = static_cast<double>(game->rating());
+    obj[QLatin1String("release_year")] = game->releaseYear();
+    obj[QLatin1String("release_month")] = game->releaseMonth();
+    obj[QLatin1String("release_day")] = game->releaseDay();
+    obj[QLatin1String("favorite")] = game->isFavorite();
+    obj[QLatin1String("launch_cmd")] = game->launchCmd();
+    obj[QLatin1String("launch_workdir")] = game->launchWorkdir();
+    obj[QLatin1String("launch_basedir")] = game->launchCmdBasedir();
+
+    // Assets
+    QJsonObject assets_obj = assets_to_json(game->assets());
+    if (!assets_obj.isEmpty())
+        obj[QLatin1String("assets")] = assets_obj;
+
+    // Extra
+    if (!game->extraMap().isEmpty())
+        obj[QLatin1String("extra")] = QJsonObject::fromVariantMap(game->extraMap());
+
+    // Files
+    QJsonArray files_arr;
+    if (game->filesModel()) {
+        for (const model::GameFile* file : game->filesModel()->entries()) {
+            QJsonObject file_obj;
+            file_obj[QLatin1String("path")] = file->fileinfo().absoluteFilePath();
+            file_obj[QLatin1String("name")] = file->name();
+            file_obj[QLatin1String("uri")] = file->uri();
+            files_arr.append(file_obj);
+        }
+    }
+    obj[QLatin1String("files")] = files_arr;
+
+    // Collection names
+    QJsonArray coll_arr;
+    if (game->collectionsModel()) {
+        for (const model::Collection* coll : game->collectionsModel()->entries())
+            coll_arr.append(coll->name());
+    }
+    obj[QLatin1String("collection_names")] = coll_arr;
+
+    return obj;
+}
+
+QJsonObject collection_to_json(const model::Collection* coll)
+{
+    QJsonObject obj;
+    obj[QLatin1String("name")] = coll->name();
+    obj[QLatin1String("sort_by")] = coll->sortBy();
+    obj[QLatin1String("short_name")] = coll->shortName();
+    obj[QLatin1String("summary")] = coll->summary();
+    obj[QLatin1String("description")] = coll->description();
+    obj[QLatin1String("launch_cmd")] = coll->commonLaunchCmd();
+    obj[QLatin1String("launch_workdir")] = coll->commonLaunchWorkdir();
+    obj[QLatin1String("launch_basedir")] = coll->commonLaunchCmdBasedir();
+
+    QJsonObject assets_obj = assets_to_json(coll->assets());
+    if (!assets_obj.isEmpty())
+        obj[QLatin1String("assets")] = assets_obj;
+
+    if (!coll->extraMap().isEmpty())
+        obj[QLatin1String("extra")] = QJsonObject::fromVariantMap(coll->extraMap());
+
+    // Game keys
+    QJsonArray game_keys;
+    if (coll->gameList()) {
+        for (const model::Game* game : coll->gameList()->entries())
+            game_keys.append(game_unique_key(game));
+    }
+    obj[QLatin1String("game_keys")] = game_keys;
+
+    return obj;
+}
+
 } // namespace
 
 
 namespace providers {
 namespace game_cache {
 
-GameCache::GameCache(QString db_path)
-    : m_db_path(std::move(db_path))
+GameCache::GameCache(QString cache_path)
+    : m_cache_path(std::move(cache_path))
 {}
 
-bool GameCache::createTables()
+bool GameCache::exists() const
 {
-    SqliteDb db(m_db_path);
-    if (!db.open()) {
-        Log::warning(LOGMSG("Could not open game cache database"));
-        return false;
-    }
-
-    if (!db.hasTable(QStringLiteral("collections"))) {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "CREATE TABLE collections"
-              "(" "id INTEGER PRIMARY KEY"
-              "," "name TEXT UNIQUE NOT NULL"
-              "," "sort_by TEXT"
-              "," "short_name TEXT"
-              "," "summary TEXT"
-              "," "description TEXT"
-              "," "launch_cmd TEXT"
-              "," "launch_workdir TEXT"
-              "," "launch_basedir TEXT"
-              "," "assets_json TEXT"
-              "," "extra_json TEXT"
-            ");"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-    }
-
-    if (!db.hasTable(QStringLiteral("games"))) {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "CREATE TABLE games"
-              "(" "id INTEGER PRIMARY KEY"
-              "," "title TEXT NOT NULL"
-              "," "sort_by TEXT"
-              "," "summary TEXT"
-              "," "description TEXT"
-              "," "developers TEXT"
-              "," "publishers TEXT"
-              "," "genres TEXT"
-              "," "tags TEXT"
-              "," "player_count INTEGER"
-              "," "rating REAL"
-              "," "release_year INTEGER"
-              "," "release_month INTEGER"
-              "," "release_day INTEGER"
-              "," "favorite INTEGER DEFAULT 0"
-              "," "launch_cmd TEXT"
-              "," "launch_workdir TEXT"
-              "," "launch_basedir TEXT"
-              "," "assets_json TEXT"
-              "," "extra_json TEXT"
-            ");"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-    }
-
-    if (!db.hasTable(QStringLiteral("game_files"))) {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "CREATE TABLE game_files"
-              "(" "id INTEGER PRIMARY KEY"
-              "," "game_id INTEGER NOT NULL REFERENCES games(id)"
-              "," "path TEXT"
-              "," "name TEXT"
-              "," "uri TEXT"
-            ");"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-    }
-
-    if (!db.hasTable(QStringLiteral("collection_games"))) {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "CREATE TABLE collection_games"
-              "(" "collection_id INTEGER NOT NULL REFERENCES collections(id)"
-              "," "game_id INTEGER NOT NULL REFERENCES games(id)"
-              "," "PRIMARY KEY (collection_id, game_id)"
-            ");"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-    }
-
-    if (!db.hasTable(QStringLiteral("dir_fingerprints"))) {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "CREATE TABLE dir_fingerprints"
-              "(" "dir_path TEXT PRIMARY KEY"
-              "," "last_modified INTEGER NOT NULL"
-            ");"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-    }
-
-    return true;
-}
-
-bool GameCache::checkDirectoryFingerprint(const QStringList& game_dirs, const QString& config_hash) const
-{
-    SqliteDb db(m_db_path);
-    if (!db.open())
-        return false;
-
-    if (!db.hasTable(QStringLiteral("dir_fingerprints")))
-        return false;
-
-    QSqlQuery query;
-    query.prepare(QStringLiteral("SELECT dir_path, last_modified FROM dir_fingerprints"));
-    if (!query.exec()) {
-        print_query_error(LOGMSG("GameCache"), query);
-        return false;
-    }
-
-    QHash<QString, qint64> cached_fingerprints;
-    QString cached_config_hash;
-    while (query.next()) {
-        const QString key = query.value(0).toString();
-        if (key == QLatin1String(CONFIG_HASH_KEY)) {
-            cached_config_hash = QString::number(query.value(1).toLongLong());
-        } else {
-            cached_fingerprints[key] = query.value(1).toLongLong();
-        }
-    }
-
-    // Check config hash (game_dirs + providers)
-    if (cached_config_hash != config_hash)
-        return false;
-
-    // Check if all game dirs are still valid
-    for (const QString& dir : game_dirs) {
-        QFileInfo dir_info(dir);
-        if (!dir_info.exists() || !dir_info.isDir())
-            return false;
-
-        const qint64 current_mtime = dir_info.lastModified().toSecsSinceEpoch();
-        const auto it = cached_fingerprints.find(dir);
-        if (it == cached_fingerprints.end() || it.value() != current_mtime)
-            return false;
-    }
-
-    return true;
-}
-
-void GameCache::saveDirectoryFingerprint(const QStringList& game_dirs, const QString& config_hash)
-{
-    SqliteDb db(m_db_path);
-    if (!db.open())
-        return;
-
-    db.startTransaction();
-
-    QSqlQuery delete_query;
-    delete_query.prepare(QStringLiteral("DELETE FROM dir_fingerprints"));
-    if (!delete_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), delete_query);
-        db.rollback();
-        return;
-    }
-
-    QSqlQuery insert_query;
-    insert_query.prepare(QStringLiteral(
-        "INSERT INTO dir_fingerprints (dir_path, last_modified) VALUES (?, ?)"
-    ));
-
-    // Save config hash
-    insert_query.addBindValue(QLatin1String(CONFIG_HASH_KEY));
-    insert_query.addBindValue(config_hash.toLongLong());
-    if (!insert_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), insert_query);
-        db.rollback();
-        return;
-    }
-
-    // Save directory fingerprints
-    for (const QString& dir : game_dirs) {
-        QFileInfo dir_info(dir);
-        if (!dir_info.exists())
-            continue;
-
-        const qint64 mtime = dir_info.lastModified().toSecsSinceEpoch();
-        insert_query.addBindValue(dir);
-        insert_query.addBindValue(mtime);
-        if (!insert_query.exec()) {
-            print_query_error(LOGMSG("GameCache"), insert_query);
-            db.rollback();
-            return;
-        }
-    }
-
-    db.commit();
-}
-
-bool GameCache::isCacheValid(const QStringList& game_dirs, const QString& config_hash) const
-{
-    if (!QFileInfo::exists(m_db_path))
-        return false;
-
-    return checkDirectoryFingerprint(game_dirs, config_hash);
+    return QFileInfo::exists(m_cache_path);
 }
 
 bool GameCache::load(std::vector<model::Collection*>& collections,
                      std::vector<model::Game*>& games)
 {
-    SqliteDb db(m_db_path);
-    if (!db.open()) {
-        Log::warning(LOGMSG("Could not open game cache database"));
+    QFile file(m_cache_path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        Log::warning(LOGMSG("GameCache"), LOGMSG("Could not open cache file: %1").arg(m_cache_path));
         return false;
     }
 
-    // Load collections
-    QHash<int, model::Collection*> collection_map;
-    {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "SELECT id, name, sort_by, short_name, summary, description, "
-            "launch_cmd, launch_workdir, launch_basedir, assets_json, extra_json "
-            "FROM collections"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
+    const QByteArray data = file.readAll();
+    file.close();
 
-        while (query.next()) {
-            auto* coll = new model::Collection(query.value(1).toString());
-            coll->setSortBy(query.value(2).toString());
-            coll->setShortName(query.value(3).toString());
-            coll->setSummary(query.value(4).toString());
-            coll->setDescription(query.value(5).toString());
-            coll->setCommonLaunchCmd(query.value(6).toString());
-            coll->setCommonLaunchWorkdir(query.value(7).toString());
-            coll->setCommonLaunchCmdBasedir(query.value(8).toString());
-
-            const QString assets_str = query.value(9).toString();
-            if (!assets_str.isEmpty()) {
-                const QJsonObject assets_obj = QJsonDocument::fromJson(assets_str.toUtf8()).object();
-                json_to_assets(assets_obj, coll->assetsMut());
-            }
-
-            const QString extra_str = query.value(10).toString();
-            if (!extra_str.isEmpty()) {
-                const QJsonObject extra_obj = QJsonDocument::fromJson(extra_str.toUtf8()).object();
-                coll->extraMapMut() = extra_obj.toVariantMap();
-            }
-
-            collection_map[query.value(0).toInt()] = coll;
-            collections.push_back(coll);
-        }
+    QJsonParseError parse_error;
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        Log::warning(LOGMSG("GameCache"), LOGMSG("Cache parse error: %1").arg(parse_error.errorString()));
+        return false;
     }
 
-    // Load games
-    QHash<int, model::Game*> game_map;
+    const QJsonObject root = doc.object();
+
+    // Load games first (collections reference game keys)
+    QHash<QString, model::Game*> game_by_key;
     {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "SELECT id, title, sort_by, summary, description, "
-            "developers, publishers, genres, tags, "
-            "player_count, rating, release_year, release_month, release_day, "
-            "favorite, launch_cmd, launch_workdir, launch_basedir, "
-            "assets_json, extra_json "
-            "FROM games"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
+        const QJsonArray games_arr = root[QLatin1String("games")].toArray();
+        for (const QJsonValue& val : games_arr) {
+            const QJsonObject obj = val.toObject();
 
-        while (query.next()) {
             auto* game = new model::Game();
-            game->setTitle(query.value(1).toString());
-            game->setSortBy(query.value(2).toString());
-            game->setSummary(query.value(3).toString());
-            game->setDescription(query.value(4).toString());
-            game->developerList() = query.value(5).toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
-            game->publisherList() = query.value(6).toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
-            game->genreList() = query.value(7).toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
-            game->tagList() = query.value(8).toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
-            game->setPlayerCount(query.value(9).toInt());
-            game->setRating(query.value(10).toFloat());
+            game->setTitle(obj[QLatin1String("title")].toString());
+            game->setSortBy(obj[QLatin1String("sort_by")].toString());
+            game->setSummary(obj[QLatin1String("summary")].toString());
+            game->setDescription(obj[QLatin1String("description")].toString());
+            game->developerList() = obj[QLatin1String("developers")].toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+            game->publisherList() = obj[QLatin1String("publishers")].toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+            game->genreList() = obj[QLatin1String("genres")].toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+            game->tagList() = obj[QLatin1String("tags")].toString().split(QLatin1Char(','), Qt::SkipEmptyParts);
+            game->setPlayerCount(obj[QLatin1String("player_count")].toInt());
+            game->setRating(static_cast<float>(obj[QLatin1String("rating")].toDouble()));
 
-            const int year = query.value(11).toInt();
-            const int month = query.value(12).toInt();
-            const int day = query.value(13).toInt();
+            const int year = obj[QLatin1String("release_year")].toInt();
+            const int month = obj[QLatin1String("release_month")].toInt();
+            const int day = obj[QLatin1String("release_day")].toInt();
             if (year > 0)
                 game->setReleaseDate(QDate(year, month > 0 ? month : 1, day > 0 ? day : 1));
 
-            game->setFavorite(query.value(14).toBool());
-            game->setLaunchCmd(query.value(15).toString());
-            game->setLaunchWorkdir(query.value(16).toString());
-            game->setLaunchCmdBasedir(query.value(17).toString());
+            game->setFavorite(obj[QLatin1String("favorite")].toBool());
+            game->setLaunchCmd(obj[QLatin1String("launch_cmd")].toString());
+            game->setLaunchWorkdir(obj[QLatin1String("launch_workdir")].toString());
+            game->setLaunchCmdBasedir(obj[QLatin1String("launch_basedir")].toString());
 
-            const QString assets_str = query.value(18).toString();
-            if (!assets_str.isEmpty()) {
-                const QJsonObject assets_obj = QJsonDocument::fromJson(assets_str.toUtf8()).object();
+            // Assets
+            const QJsonObject assets_obj = obj[QLatin1String("assets")].toObject();
+            if (!assets_obj.isEmpty())
                 json_to_assets(assets_obj, game->assetsMut());
-            }
 
-            const QString extra_str = query.value(19).toString();
-            if (!extra_str.isEmpty()) {
-                const QJsonObject extra_obj = QJsonDocument::fromJson(extra_str.toUtf8()).object();
+            // Extra
+            const QJsonObject extra_obj = obj[QLatin1String("extra")].toObject();
+            if (!extra_obj.isEmpty())
                 game->extraMapMut() = extra_obj.toVariantMap();
-            }
 
-            game_map[query.value(0).toInt()] = game;
+            // Files
+            const QJsonArray files_arr = obj[QLatin1String("files")].toArray();
+            std::vector<model::GameFile*> file_entries;
+            for (const QJsonValue& file_val : files_arr) {
+                const QJsonObject file_obj = file_val.toObject();
+                auto* gfile = new model::GameFile(file_obj[QLatin1String("path")].toString(), *game);
+                gfile->setName(file_obj[QLatin1String("name")].toString());
+                gfile->setUri(file_obj[QLatin1String("uri")].toString());
+                file_entries.push_back(gfile);
+            }
+            game->setFiles(std::move(file_entries));
+
+            const QString key = obj[QLatin1String("key")].toString();
+            game_by_key[key] = game;
             games.push_back(game);
         }
     }
 
-    // Load game files and group by game_id
-    QHash<int, std::vector<model::GameFile*>> files_by_game;
+    // Build game→collections mapping from game data
+    QHash<QString, std::vector<model::Game*>> coll_name_to_games;
+    QHash<QString, std::vector<model::Collection*>> game_colls;  // game_key → collections
     {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "SELECT game_id, path, name, uri FROM game_files"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
-
-        while (query.next()) {
-            const int game_id = query.value(0).toInt();
-            auto game_it = game_map.find(game_id);
-            if (game_it == game_map.end())
+        const QJsonArray games_arr = root[QLatin1String("games")].toArray();
+        for (const QJsonValue& val : games_arr) {
+            const QJsonObject obj = val.toObject();
+            const QString key = obj[QLatin1String("key")].toString();
+            auto game_it = game_by_key.find(key);
+            if (game_it == game_by_key.end())
                 continue;
 
-            const QString path = query.value(1).toString();
-            auto* file = new model::GameFile(path, *game_it.value());
-            file->setName(query.value(2).toString());
-            file->setUri(query.value(3).toString());
-            files_by_game[game_id].push_back(file);
+            const QJsonArray coll_names = obj[QLatin1String("collection_names")].toArray();
+            for (const QJsonValue& coll_val : coll_names)
+                coll_name_to_games[coll_val.toString()].push_back(game_it.value());
         }
     }
 
-    // Set files on games
-    for (auto it = files_by_game.begin(); it != files_by_game.end(); ++it) {
-        auto game_it = game_map.find(it.key());
-        if (game_it == game_map.end())
-            continue;
-        game_it.value()->setFiles(std::move(it.value()));
-    }
-
-    // Load collection-game associations and build reverse mapping
-    QHash<int, std::vector<model::Game*>> coll_games;
-    QHash<int, std::vector<model::Collection*>> game_colls;
+    // Load collections, set games, build reverse mapping
     {
-        QSqlQuery query;
-        query.prepare(QStringLiteral(
-            "SELECT collection_id, game_id FROM collection_games"
-        ));
-        if (!query.exec()) {
-            print_query_error(LOGMSG("GameCache"), query);
-            return false;
-        }
+        const QJsonArray colls_arr = root[QLatin1String("collections")].toArray();
+        for (const QJsonValue& val : colls_arr) {
+            const QJsonObject obj = val.toObject();
 
-        while (query.next()) {
-            const int coll_id = query.value(0).toInt();
-            const int game_id = query.value(1).toInt();
+            auto* coll = new model::Collection(obj[QLatin1String("name")].toString());
+            coll->setSortBy(obj[QLatin1String("sort_by")].toString());
+            coll->setShortName(obj[QLatin1String("short_name")].toString());
+            coll->setSummary(obj[QLatin1String("summary")].toString());
+            coll->setDescription(obj[QLatin1String("description")].toString());
+            coll->setCommonLaunchCmd(obj[QLatin1String("launch_cmd")].toString());
+            coll->setCommonLaunchWorkdir(obj[QLatin1String("launch_workdir")].toString());
+            coll->setCommonLaunchCmdBasedir(obj[QLatin1String("launch_basedir")].toString());
 
-            auto game_it = game_map.find(game_id);
-            if (game_it == game_map.end())
-                continue;
+            const QJsonObject assets_obj = obj[QLatin1String("assets")].toObject();
+            if (!assets_obj.isEmpty())
+                json_to_assets(assets_obj, coll->assetsMut());
 
-            coll_games[coll_id].push_back(game_it.value());
+            const QJsonObject extra_obj = obj[QLatin1String("extra")].toObject();
+            if (!extra_obj.isEmpty())
+                coll->extraMapMut() = extra_obj.toVariantMap();
 
-            auto coll_it = collection_map.find(coll_id);
-            if (coll_it != collection_map.end())
-                game_colls[game_id].push_back(coll_it.value());
+            // Set games on collection
+            const QString coll_name = coll->name();
+            auto games_it = coll_name_to_games.find(coll_name);
+            if (games_it != coll_name_to_games.end()) {
+                // Build reverse mapping: game_key → this collection
+                for (model::Game* game : games_it.value()) {
+                    const QString game_key = game_unique_key(game);
+                    game_colls[game_key].push_back(coll);
+                }
+                coll->setGames(std::move(games_it.value()));
+            }
+
+            collections.push_back(coll);
         }
     }
 
-    // Set games on collections
-    for (auto it = coll_games.begin(); it != coll_games.end(); ++it) {
-        auto coll_it = collection_map.find(it.key());
-        if (coll_it == collection_map.end())
-            continue;
-        coll_it.value()->setGames(std::move(it.value()));
-    }
-
-    // Set collections on games (reverse mapping)
+    // Set collections on games (reverse mapping via setCollections)
     for (auto it = game_colls.begin(); it != game_colls.end(); ++it) {
-        auto game_it = game_map.find(it.key());
-        if (game_it == game_map.end())
-            continue;
-        game_it.value()->setCollections(std::move(it.value()));
+        auto game_it = game_by_key.find(it.key());
+        if (game_it != game_by_key.end())
+            game_it.value()->setCollections(std::move(it.value()));
     }
 
     Log::info(LOGMSG("GameCache"), LOGMSG("Loaded %1 collections and %2 games from cache")
@@ -558,202 +374,34 @@ bool GameCache::load(std::vector<model::Collection*>& collections,
 }
 
 void GameCache::save(const std::vector<model::Collection*>& collections,
-                     const std::vector<model::Game*>& games,
-                     const QStringList& game_dirs,
-                     const QString& config_hash)
+                     const std::vector<model::Game*>& games)
 {
-    if (!createTables())
-        return;
+    QJsonObject root;
 
-    SqliteDb db(m_db_path);
-    if (!db.open()) {
-        Log::warning(LOGMSG("Could not open game cache database"));
-        return;
-    }
+    // Save games
+    QJsonArray games_arr;
+    for (const model::Game* game : games)
+        games_arr.append(game_to_json(game));
+    root[QLatin1String("games")] = games_arr;
 
-    db.startTransaction();
+    // Save collections
+    QJsonArray colls_arr;
+    for (const model::Collection* coll : collections)
+        colls_arr.append(collection_to_json(coll));
+    root[QLatin1String("collections")] = colls_arr;
 
-    // Clear existing data
-    QSqlQuery clear_query;
-    clear_query.prepare(QStringLiteral("DELETE FROM collection_games"));
-    if (!clear_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), clear_query);
-        db.rollback();
-        return;
-    }
-    clear_query.prepare(QStringLiteral("DELETE FROM game_files"));
-    if (!clear_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), clear_query);
-        db.rollback();
-        return;
-    }
-    clear_query.prepare(QStringLiteral("DELETE FROM games"));
-    if (!clear_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), clear_query);
-        db.rollback();
-        return;
-    }
-    clear_query.prepare(QStringLiteral("DELETE FROM collections"));
-    if (!clear_query.exec()) {
-        print_query_error(LOGMSG("GameCache"), clear_query);
-        db.rollback();
+    // Write to file
+    QDir().mkpath(QFileInfo(m_cache_path).absolutePath());
+
+    QFile file(m_cache_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        Log::warning(LOGMSG("GameCache"), LOGMSG("Could not write cache file: %1").arg(m_cache_path));
         return;
     }
 
-    // Save collections (INSERT OR REPLACE handles duplicate names)
-    QHash<QString, int> collection_ids;
-    {
-        QSqlQuery insert_query;
-        insert_query.prepare(QStringLiteral(
-            "INSERT OR REPLACE INTO collections (name, sort_by, short_name, summary, description, "
-            "launch_cmd, launch_workdir, launch_basedir, assets_json, extra_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ));
-
-        for (const model::Collection* coll : collections) {
-            insert_query.addBindValue(coll->name());
-            insert_query.addBindValue(coll->sortBy());
-            insert_query.addBindValue(coll->shortName());
-            insert_query.addBindValue(coll->summary());
-            insert_query.addBindValue(coll->description());
-            insert_query.addBindValue(coll->commonLaunchCmd());
-            insert_query.addBindValue(coll->commonLaunchWorkdir());
-            insert_query.addBindValue(coll->commonLaunchCmdBasedir());
-            insert_query.addBindValue(assets_to_json(coll->assets()));
-
-            if (!coll->extraMap().isEmpty()) {
-                QJsonObject extra_obj = QJsonObject::fromVariantMap(coll->extraMap());
-                insert_query.addBindValue(QString::fromUtf8(QJsonDocument(extra_obj).toJson(QJsonDocument::Compact)));
-            } else {
-                insert_query.addBindValue(QString());
-            }
-
-            if (!insert_query.exec()) {
-                print_query_error(LOGMSG("GameCache"), insert_query);
-                db.rollback();
-                return;
-            }
-
-            collection_ids[coll->name()] = insert_query.lastInsertId().toInt();
-        }
-    }
-
-    // Save games (use unique key to handle duplicate titles)
-    QHash<QString, int> game_ids;
-    {
-        QSqlQuery insert_query;
-        insert_query.prepare(QStringLiteral(
-            "INSERT INTO games (title, sort_by, summary, description, "
-            "developers, publishers, genres, tags, "
-            "player_count, rating, release_year, release_month, release_day, "
-            "favorite, launch_cmd, launch_workdir, launch_basedir, "
-            "assets_json, extra_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        ));
-
-        for (const model::Game* game : games) {
-            insert_query.addBindValue(game->title());
-            insert_query.addBindValue(game->sortBy());
-            insert_query.addBindValue(game->summary());
-            insert_query.addBindValue(game->description());
-            insert_query.addBindValue(game->developerListConst().join(QLatin1Char(',')));
-            insert_query.addBindValue(game->publisherListConst().join(QLatin1Char(',')));
-            insert_query.addBindValue(game->genreListConst().join(QLatin1Char(',')));
-            insert_query.addBindValue(game->tagListConst().join(QLatin1Char(',')));
-            insert_query.addBindValue(game->playerCount());
-            insert_query.addBindValue(game->rating());
-            insert_query.addBindValue(game->releaseYear());
-            insert_query.addBindValue(game->releaseMonth());
-            insert_query.addBindValue(game->releaseDay());
-            insert_query.addBindValue(game->isFavorite() ? 1 : 0);
-            insert_query.addBindValue(game->launchCmd());
-            insert_query.addBindValue(game->launchWorkdir());
-            insert_query.addBindValue(game->launchCmdBasedir());
-            insert_query.addBindValue(assets_to_json(game->assets()));
-
-            if (!game->extraMap().isEmpty()) {
-                QJsonObject extra_obj = QJsonObject::fromVariantMap(game->extraMap());
-                insert_query.addBindValue(QString::fromUtf8(QJsonDocument(extra_obj).toJson(QJsonDocument::Compact)));
-            } else {
-                insert_query.addBindValue(QString());
-            }
-
-            if (!insert_query.exec()) {
-                print_query_error(LOGMSG("GameCache"), insert_query);
-                db.rollback();
-                return;
-            }
-
-            game_ids[game_unique_key(game)] = insert_query.lastInsertId().toInt();
-        }
-    }
-
-    // Save game files
-    {
-        QSqlQuery insert_query;
-        insert_query.prepare(QStringLiteral(
-            "INSERT INTO game_files (game_id, path, name, uri) VALUES (?, ?, ?, ?)"
-        ));
-
-        for (const model::Game* game : games) {
-            auto game_it = game_ids.find(game_unique_key(game));
-            if (game_it == game_ids.end())
-                continue;
-
-            if (!game->filesModel())
-                continue;
-
-            for (const model::GameFile* file : game->filesModel()->entries()) {
-                insert_query.addBindValue(game_it.value());
-                insert_query.addBindValue(file->fileinfo().absoluteFilePath());
-                insert_query.addBindValue(file->name());
-                insert_query.addBindValue(file->uri());
-
-                if (!insert_query.exec()) {
-                    print_query_error(LOGMSG("GameCache"), insert_query);
-                    db.rollback();
-                    return;
-                }
-            }
-        }
-    }
-
-    // Save collection-game associations
-    {
-        QSqlQuery insert_query;
-        insert_query.prepare(QStringLiteral(
-            "INSERT INTO collection_games (collection_id, game_id) VALUES (?, ?)"
-        ));
-
-        for (const model::Collection* coll : collections) {
-            auto coll_it = collection_ids.find(coll->name());
-            if (coll_it == collection_ids.end())
-                continue;
-
-            if (!coll->gameList())
-                continue;
-
-            for (const model::Game* game : coll->gameList()->entries()) {
-                auto game_it = game_ids.find(game_unique_key(game));
-                if (game_it == game_ids.end())
-                    continue;
-
-                insert_query.addBindValue(coll_it.value());
-                insert_query.addBindValue(game_it.value());
-
-                if (!insert_query.exec()) {
-                    print_query_error(LOGMSG("GameCache"), insert_query);
-                    db.rollback();
-                    return;
-                }
-            }
-        }
-    }
-
-    db.commit();
-
-    // Save directory fingerprints and config hash
-    saveDirectoryFingerprint(game_dirs, config_hash);
+    const QJsonDocument doc(root);
+    file.write(doc.toJson(QJsonDocument::Compact));
+    file.close();
 
     Log::info(LOGMSG("GameCache"), LOGMSG("Saved %1 collections and %2 games to cache")
         .arg(collections.size()).arg(games.size()));
@@ -761,7 +409,7 @@ void GameCache::save(const std::vector<model::Collection*>& collections,
 
 void GameCache::invalidate()
 {
-    QFile::remove(m_db_path);
+    QFile::remove(m_cache_path);
 }
 
 } // namespace game_cache

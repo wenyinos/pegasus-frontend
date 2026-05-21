@@ -18,7 +18,6 @@
 #pragma once
 
 #include <QString>
-#include <QStringList>
 #include <vector>
 
 namespace model { class Collection; }
@@ -30,23 +29,17 @@ namespace game_cache {
 
 class GameCache {
 public:
-    explicit GameCache(QString db_path);
+    explicit GameCache(QString cache_path);
 
-    bool isCacheValid(const QStringList& game_dirs, const QString& config_hash) const;
+    bool exists() const;
     bool load(std::vector<model::Collection*>& collections,
               std::vector<model::Game*>& games);
     void save(const std::vector<model::Collection*>& collections,
-              const std::vector<model::Game*>& games,
-              const QStringList& game_dirs,
-              const QString& config_hash);
+              const std::vector<model::Game*>& games);
     void invalidate();
 
 private:
-    const QString m_db_path;
-
-    bool createTables();
-    bool checkDirectoryFingerprint(const QStringList& game_dirs, const QString& config_hash) const;
-    void saveDirectoryFingerprint(const QStringList& game_dirs, const QString& config_hash);
+    const QString m_cache_path;
 };
 
 } // namespace game_cache

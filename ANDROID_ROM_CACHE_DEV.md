@@ -415,39 +415,57 @@ QObject::connect(android::GameProcessNotifier::instance(),
 
 ## 功能概述
 
-首次启动时扫描所有 provider 构建游戏列表并缓存到 SQLite。后续启动若游戏目录和 Provider 配置未变化，直接从缓存加载，跳过全量扫描。
+首次启动时扫描所有 provider 构建游戏列表并缓存到 JSON 文件。后续启动直接从缓存加载，跳过全量扫描。缓存永久保存，仅在用户手动刷新时更新。
+
+解决了 USB 外接存储设备重新挂载后 `lastModified` 时间戳变化导致缓存反复失效的问题。
 
 ## 架构
 
 ```
 ProviderManager::run()
     ↓
-读取 game_dirs.txt → 计算 config_hash
-    ↓
-GameCache::isCacheValid(game_dirs, config_hash)
-    ├─ 有效 → GameCache::load() → 返回缓存数据
-    └─ 无效 → 执行 provider 扫描 → GameCache::save()
+GameCache::exists()
+    ├─ 存在 → GameCache::load() → 返回缓存数据
+    └─ 不存在 → 执行 provider 扫描 → GameCache::save()
 ```
 
-## 新增文件
+## 文件
 
 ### GameCache.h/cpp
 
-SQLite 缓存实现，位于 `src/backend/providers/game_cache/`。
+JSON 缓存实现，位于 `src/backend/providers/game_cache/`。
 
-**数据库表：**
-- `collections` - 合集数据（name UNIQUE）
-- `games` - 游戏数据（title, 属性, assets_json, extra_json）
-- `game_files` - 游戏文件（game_id 外键）
-- `collection_games` - 合集-游戏关联
-- `dir_fingerprints` - 目录指纹 + config_hash
+**存储格式**：`gamecache.json`（Compact JSON）
+
+**JSON 结构：**
+```json
+{
+  "games": [
+    {
+      "key": "title\0filepath",
+      "title": "...", "sort_by": "...",
+      "developers": "...", "publishers": "...",
+      "assets": { "boxFront": ["..."] },
+      "files": [{ "path": "...", "name": "...", "uri": "..." }],
+      "collection_names": ["PSP", "Favorites"]
+    }
+  ],
+  "collections": [
+    {
+      "name": "PSP", "short_name": "psp",
+      "assets": { ... },
+      "game_keys": ["title\0filepath"]
+    }
+  ]
+}
+```
 
 **核心方法：**
 ```cpp
-bool isCacheValid(const QStringList& game_dirs, const QString& config_hash) const;
+bool exists() const;
 bool load(std::vector<Collection*>& collections, std::vector<Game*>& games);
-void save(const std::vector<Collection*>&, const std::vector<Game*>&,
-          const QStringList& game_dirs, const QString& config_hash);
+void save(const std::vector<Collection*>&, const std::vector<Game*>&);
+void invalidate();
 ```
 
 ### game_cache.pri
@@ -466,29 +484,30 @@ const HashMap<AssetType, QStringList, EnumHash>& allAssets() const;
 ### ProviderManager.cpp
 
 集成缓存逻辑：
-- `read_game_dirs()` - 从 AppSettings 读取配置的游戏目录
-- `compute_config_hash()` - SHA256(game_dirs + enabled_providers)
-- run() 中：检查缓存 → 加载或扫描 → 保存缓存
+- `default_cache_path()` - 返回 JSON 缓存路径
+- run() 中：缓存存在 → 加载，不存在 → 扫描 → 保存
 
 ### providers/CMakeLists.txt / providers.pri
 
 注册 GameCache 源文件。
 
-## 缓存失效条件
+## 缓存行为
 
-1. `gamecache.db` 文件不存在
-2. 任何游戏目录的 `lastModified` 时间戳变化
-3. 游戏目录列表变化（增删目录）
-4. config_hash 变化（启用/禁用 Provider）
+- 缓存文件存在 → 直接加载，不做任何校验
+- 缓存文件不存在 → 全量扫描 → 保存
+- 用户手动刷新 → 重新扫描 → 覆盖保存
+- 缓存损坏（JSON 解析失败）→ 回退到全量扫描
 
 ## 唯一键策略
 
 游戏使用 `title + \0 + first_file_path` 作为唯一键，处理同名游戏场景。
 
-合集使用 `INSERT OR REPLACE` 处理潜在的名称冲突。
-
 ## 线程安全
 
 - GameCache 在 QtConcurrent 线程中使用
-- SqliteDb 每次操作创建新连接，线程安全
+- 仅文件 I/O，无共享状态
 - QObject 对象在主线程创建，信号通过 AutoConnection 自动排队
+
+## 从 SQLite 迁移
+
+旧版使用 `gamecache.db`（SQLite），新版使用 `gamecache.json`。旧文件不会自动删除，可手动移除。
