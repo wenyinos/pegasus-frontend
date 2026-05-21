@@ -25,6 +25,7 @@
 #include <QtAndroidExtras/QAndroidJniEnvironment>
 #include <QtAndroidExtras/QAndroidJniObject>
 #include <QUrl>
+#include <jni.h>
 
 
 namespace {
@@ -208,4 +209,53 @@ QString to_document_uri(const QString& path)
     return uri_str;
 }
 
+GameProcessNotifier* GameProcessNotifier::instance()
+{
+    static GameProcessNotifier notifier;
+    return &notifier;
+}
+
+void GameProcessNotifier::notifyFinished()
+{
+    emit gameProcessFinished();
+}
+
 } // namespace android
+
+
+// JNI callback for game process finished
+static void nativeOnGameProcessFinished(JNIEnv *env, jclass clazz)
+{
+    Q_UNUSED(env)
+    Q_UNUSED(clazz)
+    android::GameProcessNotifier::instance()->notifyFinished();
+}
+
+// Register JNI native methods
+static JNINativeMethod methods[] = {
+    {"onGameProcessFinished", "()V", (void*)nativeOnGameProcessFinished}
+};
+
+static int registerNativeMethods(JNIEnv *env)
+{
+    jclass clazz = env->FindClass("org/pegasus_frontend/android/MainActivity");
+    if (clazz == nullptr)
+        return JNI_ERR;
+
+    return env->RegisterNatives(clazz, methods, sizeof(methods) / sizeof(methods[0]));
+}
+
+// This function is called by the JVM when the native library is loaded
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    Q_UNUSED(reserved)
+
+    JNIEnv *env;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK)
+        return JNI_ERR;
+
+    if (registerNativeMethods(env) != JNI_OK)
+        return JNI_ERR;
+
+    return JNI_VERSION_1_6;
+}

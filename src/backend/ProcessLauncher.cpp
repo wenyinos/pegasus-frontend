@@ -272,7 +272,7 @@ void ProcessLauncher::runProcess(const QString& command, const QStringList& args
     const QString result = android::run_am_call(args);
     if (result.isEmpty()) {
         emit processLaunchOk();
-        Log::info(LOGMSG("Activity finished"));
+        Log::info(LOGMSG("Activity started"));
     }
     else {
         const QString message = pretty_android_exception(result).arg(result);
@@ -360,6 +360,16 @@ void ProcessLauncher::afterRun()
 
 #ifdef Q_OS_ANDROID
     cleanCache();
+#endif
+}
+
+void ProcessLauncher::onAndroidGameProcessFinished()
+{
+#ifdef Q_OS_ANDROID
+    Log::info(SEPARATOR);
+    Log::info(LOGMSG("Game process finished (Android)"));
+    afterRun();
+    emit processFinished();
 #endif
 }
 

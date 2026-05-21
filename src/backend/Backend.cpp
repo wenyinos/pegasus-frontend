@@ -27,6 +27,10 @@
 #include "platform/PowerCommands.h"
 #include "types/AppCloseType.h"
 
+#ifdef Q_OS_ANDROID
+#include "platform/AndroidHelpers.h"
+#endif
+
 // For type registration
 #include "model/Api.h"
 #include "model/keys/Key.h"
@@ -248,6 +252,10 @@ Backend::Backend(const CliArgs& args)
                      m_api_public, &model::ApiObject::onCopyFinished);
     QObject::connect(m_launcher, &ProcessLauncher::copyError,
                      m_api_public, &model::ApiObject::onCopyError);
+
+    // Game process finished callback from JNI
+    QObject::connect(android::GameProcessNotifier::instance(), &android::GameProcessNotifier::gameProcessFinished,
+                     m_launcher, &ProcessLauncher::onAndroidGameProcessFinished);
 #endif
 }
 

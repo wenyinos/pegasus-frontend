@@ -10,6 +10,7 @@ SOURCES += \
     $$PWD/ProviderUtils.cpp \
     $$PWD/SearchContext.cpp \
 
+include(game_cache/game_cache.pri)
 include(pegasus_favorites/pegasus_favorites.pri)
 include(pegasus_metadata/pegasus_metadata.pri)
 include(pegasus_media/pegasus_media.pri)

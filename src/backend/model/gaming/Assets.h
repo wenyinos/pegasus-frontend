@@ -76,6 +76,8 @@ public:
     Assets& add_file(AssetType, QString);
     Assets& add_uri(AssetType, QString);
 
+    const HashMap<AssetType, QStringList, EnumHash>& allAssets() const { return m_asset_lists; }
+
 private:
     const QStringList& get(AssetType) const;
     const QString& getFirst(AssetType) const;

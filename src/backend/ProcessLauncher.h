@@ -53,6 +53,7 @@ signals:
 public slots:
     void onLaunchRequested(const model::GameFile*);
     void onTeardownComplete();
+    void onAndroidGameProcessFinished();
 
 private slots:
     void onProcessStarted();

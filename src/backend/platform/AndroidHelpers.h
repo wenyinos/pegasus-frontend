@@ -17,6 +17,7 @@
 
 #pragma once
 
+#include <QObject>
 #include <QString>
 
 
@@ -34,5 +35,15 @@ void request_saf_permission(const std::function<void()>&);
 QString run_am_call(const QStringList&);
 QString to_content_uri(const QString&);
 QString to_document_uri(const QString&);
+
+class GameProcessNotifier : public QObject {
+    Q_OBJECT
+public:
+    static GameProcessNotifier* instance();
+    void notifyFinished();
+
+signals:
+    void gameProcessFinished();
+};
 
 } // namespace android

@@ -19,9 +19,14 @@
 
 #include "AppSettings.h"
 #include "Log.h"
+#include "Paths.h"
 #include "Provider.h"
 #include "SearchContext.h"
+#include "game_cache/GameCache.h"
+#include "utils/PathTools.h"
 
+#include <QCryptographicHash>
+#include <QFileInfo>
 #include <QtConcurrent/QtConcurrent>
 
 using ProviderPtr = providers::Provider*;
@@ -36,6 +41,36 @@ std::vector<ProviderPtr> enabled_providers()
             out.emplace_back(provider.get());
     }
     return out;
+}
+
+QStringList read_game_dirs()
+{
+    QStringList game_dirs;
+    AppSettings::parse_gamedirs([&game_dirs](const QString& line){
+        const QFileInfo finfo(line);
+        if (finfo.isDir())
+            game_dirs.append(::clean_abs_path(finfo));
+    });
+    game_dirs.removeDuplicates();
+    return game_dirs;
+}
+
+QString default_cache_db_path()
+{
+    return paths::writableCacheDir() + QStringLiteral("/gamecache.db");
+}
+
+// Hash game_dirs + enabled provider names to detect config changes
+QString compute_config_hash(const QStringList& game_dirs)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    for (const QString& dir : game_dirs)
+        hash.addData(dir.toUtf8());
+    for (const auto& provider : AppSettings::providers()) {
+        if (provider->enabled())
+            hash.addData(provider->display_name().toUtf8());
+    }
+    return QString::number(qHash(QString::fromUtf8(hash.result().toHex())));
 }
 } // namespace
 
@@ -58,6 +93,20 @@ void ProviderManager::run()
 
     m_future = QtConcurrent::run([this]{
         emit scanStarted();
+
+        const QStringList game_dirs = read_game_dirs();
+        const QString config_hash = compute_config_hash(game_dirs);
+        providers::game_cache::GameCache cache(default_cache_db_path());
+
+        // Try loading from cache first
+        if (!game_dirs.isEmpty() && cache.isCacheValid(game_dirs, config_hash)) {
+            if (cache.load(m_found_collections, m_found_games)) {
+                Log::info(LOGMSG("GameCache"), LOGMSG("Loaded game list from cache"));
+                emit scanFinished();
+                return;
+            }
+            Log::warning(LOGMSG("GameCache"), LOGMSG("Cache invalid, falling back to full scan"));
+        }
 
         providers::SearchContext sctx;
         sctx.enable_network();
@@ -122,6 +171,13 @@ void ProviderManager::run()
         std::tie(m_found_collections, m_found_games) = sctx.finalize();
 
         Log::info(LOGMSG("Game list post-processing took %1ms").arg(finalize_timer.elapsed()));
+
+        // Save to cache for next time
+        if (!game_dirs.isEmpty()) {
+            cache.save(m_found_collections, m_found_games, game_dirs, config_hash);
+            Log::info(LOGMSG("GameCache"), LOGMSG("Saved game list to cache"));
+        }
+
         emit scanFinished();
     });
 }

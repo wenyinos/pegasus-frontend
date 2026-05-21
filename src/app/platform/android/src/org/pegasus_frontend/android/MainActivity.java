@@ -50,6 +50,7 @@ import java.util.List;
 
 
 public class MainActivity extends org.qtproject.qt5.android.bindings.QtActivity {
+    private static final int REQUEST_LAUNCH_GAME = 1001;
     private static Activity m_self;
     private static PackageManager m_pm;
     private static int m_icon_density;
@@ -246,7 +247,7 @@ public class MainActivity extends org.qtproject.qt5.android.bindings.QtActivity 
             Intent intent = IntentHelper.parseIntentCommand(args);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            m_self.startActivity(intent);
+            m_self.startActivityForResult(intent, REQUEST_LAUNCH_GAME);
         }
         catch (Exception e) {
             return e.toString() + ": " + e.getMessage();
@@ -254,6 +255,16 @@ public class MainActivity extends org.qtproject.qt5.android.bindings.QtActivity 
 
         return null;
     }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_LAUNCH_GAME) {
+            onGameProcessFinished();
+        }
+    }
+
+    private static native void onGameProcessFinished();
 
     public static String toContentUri(String path) {
         final Uri uri = FileProvider.getUriForFile(
