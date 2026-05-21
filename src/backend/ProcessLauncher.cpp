@@ -27,6 +27,7 @@
 
 #ifdef Q_OS_ANDROID
 #include "platform/AndroidHelpers.h"
+#include <QCoreApplication>
 #include <QStorageInfo>
 #endif
 
