@@ -122,4 +122,44 @@ void ApiObject::onThemeChanged(QString theme_dir)
 {
     m_memory.changeTheme(theme_dir);
 }
+
+#ifdef Q_OS_ANDROID
+void ApiObject::onCopyProgress(float progress, QString fileName)
+{
+    Q_UNUSED(fileName);
+    if (!m_copying) {
+        m_copying = true;
+        emit copyingChanged();
+    }
+    if (qFuzzyCompare(m_copy_progress, progress))
+        return;
+    m_copy_progress = progress;
+    emit copyProgressChanged();
+}
+
+void ApiObject::onCopyFinished()
+{
+    if (m_copying) {
+        m_copying = false;
+        emit copyingChanged();
+    }
+    if (!qFuzzyIsNull(m_copy_progress)) {
+        m_copy_progress = 0.f;
+        emit copyProgressChanged();
+    }
+}
+
+void ApiObject::onCopyError(QString msg)
+{
+    if (m_copying) {
+        m_copying = false;
+        emit copyingChanged();
+    }
+    if (!qFuzzyIsNull(m_copy_progress)) {
+        m_copy_progress = 0.f;
+        emit copyProgressChanged();
+    }
+    emit copyError(msg);
+}
+#endif
 } // namespace model

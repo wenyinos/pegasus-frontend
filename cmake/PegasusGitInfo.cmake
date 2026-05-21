@@ -1,24 +1,6 @@
-execute_process(COMMAND
-    git
-    --git-dir "${PROJECT_SOURCE_DIR}/.git"
-    --work-tree "${PROJECT_SOURCE_DIR}"
-    describe
-    --always
-    --dirty
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE PEGASUS_GIT_REVISION
-)
-
-execute_process(COMMAND
-    git
-    --git-dir "${PROJECT_SOURCE_DIR}/.git"
-    --work-tree "${PROJECT_SOURCE_DIR}"
-    log -1
-    --format=%cd
-    --date=short
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE PEGASUS_GIT_DATE
-)
+# Use current date as version instead of git describe
+string(TIMESTAMP PEGASUS_GIT_REVISION "%Y-%m-%d")
+string(TIMESTAMP PEGASUS_GIT_DATE "%Y-%m-%d")
 
 execute_process(COMMAND
     git

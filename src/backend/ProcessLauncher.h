@@ -44,6 +44,12 @@ signals:
     void processRuntimeError(QString);
     void processFinished();
 
+#ifdef Q_OS_ANDROID
+    void copyProgress(float progress, QString fileName);
+    void copyFinished();
+    void copyError(QString message);
+#endif
+
 public slots:
     void onLaunchRequested(const model::GameFile*);
     void onTeardownComplete();
@@ -60,4 +66,13 @@ private:
 
     void beforeRun(const QString&);
     void afterRun();
+
+#ifdef Q_OS_ANDROID
+    QString m_cached_rom_path;
+
+    QString cacheRomPath(const QString& originalPath);
+    bool checkDiskSpace(const QString& dir, qint64 requiredSize);
+    bool copyFileWithProgress(const QString& src, const QString& dst);
+    void cleanCache();
+#endif
 };

@@ -46,6 +46,11 @@ class ApiObject : public QObject {
     // retranslate on locale change
     Q_PROPERTY(QString tr READ emptyString NOTIFY retranslationRequested)
 
+#ifdef Q_OS_ANDROID
+    Q_PROPERTY(bool copying READ isCopying NOTIFY copyingChanged)
+    Q_PROPERTY(float copyProgress READ copyProgress NOTIFY copyProgressChanged)
+#endif
+
 public:
     explicit ApiObject(const backend::CliArgs& args, QObject* parent = nullptr);
 
@@ -55,6 +60,11 @@ public:
 
     CollectionListModel* collections() const { return m_collections; }
     GameListModel* allGames() const { return m_all_games; }
+
+#ifdef Q_OS_ANDROID
+    bool isCopying() const { return m_copying; }
+    float copyProgress() const { return m_copy_progress; }
+#endif
 
 signals:
     // loading
@@ -75,6 +85,12 @@ signals:
     void eventSelectGameFile(model::Game* game);
     void eventLaunchError(QString msg);
 
+#ifdef Q_OS_ANDROID
+    void copyingChanged();
+    void copyProgressChanged();
+    void copyError(QString msg);
+#endif
+
 public slots:
     // game launch communication
     void onGameLaunchOk();
@@ -84,6 +100,13 @@ public slots:
     // setting changes
     void onLocaleChanged();
     void onThemeChanged(QString);
+
+#ifdef Q_OS_ANDROID
+    // ROM copy progress
+    void onCopyProgress(float progress, QString fileName);
+    void onCopyFinished();
+    void onCopyError(QString msg);
+#endif
 
 private slots:
     // internal communication
@@ -100,5 +123,10 @@ private:
 
     CollectionListModel* m_collections = nullptr;
     GameListModel* m_all_games = nullptr;
+
+#ifdef Q_OS_ANDROID
+    bool m_copying = false;
+    float m_copy_progress = 0.f;
+#endif
 };
 } // namespace model

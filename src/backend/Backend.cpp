@@ -235,6 +235,16 @@ Backend::Backend(const CliArgs& args)
 
     // quit/reboot/shutdown request
     QObject::connect(&m_api_private->system(), &model::System::appCloseRequested, on_app_close);
+
+#ifdef Q_OS_ANDROID
+    // ROM copy progress for Android
+    QObject::connect(m_launcher, &ProcessLauncher::copyProgress,
+                     m_api_public, &model::ApiObject::onCopyProgress);
+    QObject::connect(m_launcher, &ProcessLauncher::copyFinished,
+                     m_api_public, &model::ApiObject::onCopyFinished);
+    QObject::connect(m_launcher, &ProcessLauncher::copyError,
+                     m_api_public, &model::ApiObject::onCopyError);
+#endif
 }
 
 void Backend::start()

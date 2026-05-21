@@ -208,6 +208,11 @@ Window {
                 { "title": qsTr("Error"), "message": msg });
             genericMessage.focus = true;
         }
+        function onCopyError(msg) {
+            genericMessage.setSource("dialogs/GenericOkDialog.qml",
+                { "title": qsTr("Error"), "message": msg });
+            genericMessage.focus = true;
+        }
     }
     Connections {
         target: Internal.scanner
@@ -240,5 +245,51 @@ Window {
 
         onSkinLoadingChanged: hideMaybe()
         onDataLoadingChanged: hideMaybe()
+    }
+
+
+    // ROM copy progress overlay (Android only)
+    Rectangle {
+        id: copyOverlay
+        anchors.fill: parent
+        color: "#CC000000"
+        visible: Api.copying
+        z: 1000
+
+        Column {
+            anchors.centerIn: parent
+            spacing: vpx(20)
+
+            Text {
+                text: qsTr("Copying ROM...")
+                color: "white"
+                font.pixelSize: vpx(24)
+                font.family: global.fonts.sans
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            Rectangle {
+                width: vpx(400)
+                height: vpx(20)
+                radius: vpx(10)
+                color: "#333"
+
+                Rectangle {
+                    width: parent.width * Api.copyProgress
+                    height: parent.height
+                    radius: vpx(10)
+                    color: "#4CAF50"
+
+                    Behavior on width { NumberAnimation { duration: 100 } }
+                }
+            }
+
+            Text {
+                text: Math.round(Api.copyProgress * 100) + "%"
+                color: "#999"
+                font.pixelSize: vpx(16)
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
     }
 }

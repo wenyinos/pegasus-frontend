@@ -27,6 +27,7 @@
 
 #ifdef Q_OS_ANDROID
 #include "platform/AndroidHelpers.h"
+#include <QStorageInfo>
 #endif
 
 #include <QDir>
@@ -174,8 +175,36 @@ void ProcessLauncher::onLaunchRequested(const model::GameFile* q_gamefile)
     // TODO: in the future, check the gamefile's own launch command first
 
     QStringList args = ::utils::tokenize_command(raw_launch_cmd);
+
+#ifdef Q_OS_ANDROID
+    // Copy ROM to internal cache before launching
+    const QString rom_path = gamefile.fileinfo().absoluteFilePath();
+    const QString cached_path = cacheRomPath(rom_path);
+
+    const qint64 rom_size = gamefile.fileinfo().size();
+    if (!checkDiskSpace(QFileInfo(cached_path).absolutePath(), rom_size)) {
+        const QString message = LOGMSG("Not enough disk space to cache ROM file");
+        Log::warning(message);
+        emit copyError(message);
+        return;
+    }
+
+    if (!copyFileWithProgress(rom_path, cached_path)) {
+        const QString message = LOGMSG("Failed to copy ROM file to cache");
+        Log::warning(message);
+        emit copyError(message);
+        return;
+    }
+
+    m_cached_rom_path = cached_path;
+    emit copyFinished();
+
+    for (QString& arg : args)
+        replace_variables(arg, QFileInfo(cached_path));
+#else
     for (QString& arg : args)
         replace_variables(arg, gamefile.fileinfo());
+#endif
 
     QString command = args.isEmpty() ? QString() : args.takeFirst();
     if (command.isEmpty()) {
@@ -334,4 +363,91 @@ void ProcessLauncher::afterRun()
 
     ScriptRunner::run(ScriptEvent::PROCESS_FINISHED);
     TerminalKbd::disable();
+
+#ifdef Q_OS_ANDROID
+    cleanCache();
+#endif
 }
+
+
+#ifdef Q_OS_ANDROID
+QString ProcessLauncher::cacheRomPath(const QString& originalPath)
+{
+    const QString storage_root = android::primary_storage_path();
+    const QDir storage_dir(storage_root);
+    const QString relative_path = storage_dir.relativeFilePath(originalPath);
+    const QString cache_base = storage_root + QStringLiteral("/pegasus-frontend/copyRoms");
+    return cache_base + QStringLiteral("/") + relative_path;
+}
+
+bool ProcessLauncher::checkDiskSpace(const QString& dir, qint64 requiredSize)
+{
+    QStorageInfo storage(dir);
+    if (!storage.isValid() || !storage.isReady())
+        return false;
+    // Reserve 100MB headroom
+    return storage.bytesAvailable() > (requiredSize + 100 * 1024 * 1024);
+}
+
+bool ProcessLauncher::copyFileWithProgress(const QString& src, const QString& dst)
+{
+    QFile srcFile(src);
+    if (!srcFile.open(QIODevice::ReadOnly)) {
+        Log::warning(LOGMSG("Cannot open source ROM file: %1").arg(src));
+        return false;
+    }
+
+    QDir().mkpath(QFileInfo(dst).absolutePath());
+
+    QFile dstFile(dst);
+    if (!dstFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        Log::warning(LOGMSG("Cannot create cache file: %1").arg(dst));
+        return false;
+    }
+
+    const qint64 totalSize = srcFile.size();
+    qint64 copiedSize = 0;
+    constexpr qint64 BUFFER_SIZE = 256 * 1024;
+    char buffer[BUFFER_SIZE];
+
+    while (!srcFile.atEnd()) {
+        const qint64 bytesRead = srcFile.read(buffer, BUFFER_SIZE);
+        if (bytesRead <= 0)
+            break;
+
+        if (dstFile.write(buffer, bytesRead) != bytesRead) {
+            Log::warning(LOGMSG("Write error during ROM copy"));
+            dstFile.close();
+            QFile::remove(dst);
+            return false;
+        }
+
+        copiedSize += bytesRead;
+        const float progress = static_cast<float>(copiedSize) / totalSize;
+        emit copyProgress(progress, QFileInfo(src).fileName());
+
+        QCoreApplication::processEvents();
+    }
+
+    dstFile.close();
+    srcFile.close();
+    return true;
+}
+
+void ProcessLauncher::cleanCache()
+{
+    if (m_cached_rom_path.isEmpty())
+        return;
+
+    if (QFile::exists(m_cached_rom_path)) {
+        QFile::remove(m_cached_rom_path);
+        Log::info(LOGMSG("Cleaned cached ROM: %1").arg(m_cached_rom_path));
+    }
+
+    const QDir parent_dir = QFileInfo(m_cached_rom_path).absoluteDir();
+    if (parent_dir.isEmpty())
+        parent_dir.rmdir(parent_dir.absolutePath());
+
+    m_cached_rom_path.clear();
+}
+#endif
