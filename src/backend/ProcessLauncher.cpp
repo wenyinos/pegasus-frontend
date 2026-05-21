@@ -182,6 +182,9 @@ void ProcessLauncher::onLaunchRequested(const model::GameFile* q_gamefile)
     const QString rom_path = gamefile.fileinfo().absoluteFilePath();
     const QString cached_path = cacheRomPath(rom_path);
 
+    // Ensure cache directory exists before checking space
+    QDir().mkpath(QFileInfo(cached_path).absolutePath());
+
     const qint64 rom_size = gamefile.fileinfo().size();
     if (!checkDiskSpace(QFileInfo(cached_path).absolutePath(), rom_size)) {
         const QString message = LOGMSG("Not enough disk space to cache ROM file");
@@ -386,8 +389,9 @@ bool ProcessLauncher::checkDiskSpace(const QString& dir, qint64 requiredSize)
     QStorageInfo storage(dir);
     if (!storage.isValid() || !storage.isReady())
         return false;
-    // Reserve 100MB headroom
-    return storage.bytesAvailable() > (requiredSize + 100 * 1024 * 1024);
+    // Reserve 50MB headroom
+    constexpr qint64 HEADROOM = 50 * 1024 * 1024;
+    return storage.bytesAvailable() > (requiredSize + HEADROOM);
 }
 
 bool ProcessLauncher::copyFileWithProgress(const QString& src, const QString& dst)
