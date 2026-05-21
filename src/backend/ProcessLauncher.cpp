@@ -209,13 +209,15 @@ void ProcessLauncher::onLaunchRequested(const model::GameFile* q_gamefile)
     command = helpers::abs_launchcmd(command, game.launchCmdBasedir());
 
 #ifdef Q_OS_ANDROID
-    const bool android_command_valid = command.toLower() == QLatin1String("am");
-    const bool android_args_valid = !args.isEmpty() && args.first().toLower() == QLatin1String("start");
-    if (!android_command_valid || !android_args_valid) {
-        const QString message = LOGMSG("Only 'am start' commands are supported at the moment");
-        Log::warning(message);
-        emit processLaunchError(message);
-        return;
+    // Support both "am start -n package/activity" and "package/activity" formats
+    if (command.toLower() != QLatin1String("am")) {
+        // Convert simplified format to "am start -n" format
+        // e.g., "org.ppsspp.ppsspp/.PpssppActivity {file.uri}" becomes
+        //        am start -n org.ppsspp.ppsspp/.PpssppActivity {file.uri}
+        args.prepend(command);
+        args.prepend(QStringLiteral("-n"));
+        args.prepend(QStringLiteral("start"));
+        command = QStringLiteral("am");
     }
 #endif
 
