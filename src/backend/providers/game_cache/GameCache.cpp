@@ -329,7 +329,7 @@ void GameCache::saveDirectoryFingerprint(const QStringList& game_dirs, const QSt
     ));
 
     // Save config hash
-    insert_query.addBindValue(QStringLiteral(CONFIG_HASH_KEY));
+    insert_query.addBindValue(QLatin1String(CONFIG_HASH_KEY));
     insert_query.addBindValue(config_hash.toLongLong());
     if (!insert_query.exec()) {
         print_query_error(LOGMSG("GameCache"), insert_query);
