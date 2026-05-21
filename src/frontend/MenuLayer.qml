@@ -85,6 +85,7 @@ FocusScope {
 
         onShowSettingsScreen: root.openScreen("menu/settings/SettingsScreen.qml")
         onShowHelpScreen: root.openScreen("menu/help/HelpScreen.qml")
+        onShowLogScreen: root.openScreen("menu/logs/LogScreen.qml")
 
         onClose: root.triggerClose()
         onRequestShutdown: root.requestShutdown()

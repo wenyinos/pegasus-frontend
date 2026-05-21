@@ -30,6 +30,7 @@ FocusScope {
     signal close
     signal showSettingsScreen
     signal showHelpScreen
+    signal showLogScreen
 
     signal requestShutdown
     signal requestSuspend
@@ -83,6 +84,17 @@ FocusScope {
             onActivated: {
                 focus = true;
                 root.showHelpScreen();
+            }
+            selected: focus
+
+            KeyNavigation.down: mbLogs
+        }
+        PrimaryMenuItem {
+            id: mbLogs
+            text: qsTr("Logs") + api.tr
+            onActivated: {
+                focus = true;
+                root.showLogScreen();
             }
             selected: focus
 

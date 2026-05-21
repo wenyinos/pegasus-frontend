@@ -47,6 +47,8 @@ public:
     static void init_qttest();
     static void close();
 
+    static void addSink(std::unique_ptr<LogSink> sink);
+
     static void info(const QString& message);
     static void warning(const QString& message);
     static void error(const QString& message);

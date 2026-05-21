@@ -38,6 +38,7 @@
         <file>menu/help/HelpScreen.qml</file>
         <file>menu/help/QrBox.qml</file>
         <file>menu/help/SectionTitle.qml</file>
+        <file>menu/logs/LogScreen.qml</file>
         <file>menu/mainmenu/GenericMenuItem.qml</file>
         <file>menu/mainmenu/MainMenuPanel.qml</file>
         <file>menu/mainmenu/PrimaryMenuItem.qml</file>

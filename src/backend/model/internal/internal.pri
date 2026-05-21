@@ -6,6 +6,7 @@ HEADERS += \
     $$PWD/GamepadManager.h \
     $$PWD/GamepadManagerBackend.h \
     $$PWD/Internal.h \
+    $$PWD/LogModel.h \
     $$PWD/Meta.h \
     $$PWD/ScannerState.h \
     $$PWD/System.h \
@@ -18,6 +19,7 @@ SOURCES += \
     $$PWD/GamepadManager.cpp \
     $$PWD/GamepadManagerBackend.cpp \
     $$PWD/Internal.cpp \
+    $$PWD/LogModel.cpp \
     $$PWD/Meta.cpp \
     $$PWD/ScannerState.cpp \
     $$PWD/System.cpp \

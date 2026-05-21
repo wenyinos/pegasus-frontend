@@ -32,6 +32,8 @@ target_sources(pegasus-backend PRIVATE
     internal/GamepadManagerBackend.h
     internal/Internal.cpp
     internal/Internal.h
+    internal/LogModel.cpp
+    internal/LogModel.h
     internal/Meta.cpp
     internal/Meta.h
     internal/ScannerState.cpp

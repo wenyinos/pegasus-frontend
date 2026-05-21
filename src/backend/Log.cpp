@@ -228,6 +228,11 @@ void Log::close()
     m_sinks.clear();
 }
 
+void Log::addSink(std::unique_ptr<LogSink> sink)
+{
+    m_sinks.emplace_back(std::move(sink));
+}
+
 #define FORALLSINK_CALLER(method) \
     void Log::method(const QString& message) \
     { \

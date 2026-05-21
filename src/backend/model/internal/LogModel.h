@@ -1,5 +1,5 @@
 // Pegasus Frontend
-// Copyright (C) 2017-2018  Mátyás Mustoha
+// Copyright (C) 2017-2024  Mátyás Mustoha
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,31 +17,31 @@
 
 #pragma once
 
-#include "GamepadManager.h"
-#include "LogModel.h"
-#include "Meta.h"
-#include "ScannerState.h"
-#include "System.h"
-#include "settings/Settings.h"
-#include "utils/QmlHelpers.h"
-
 #include <QObject>
-
-namespace backend { struct CliArgs; }
-
+#include <QStringList>
 
 namespace model {
-class Internal : public QObject {
+class LogModel : public QObject {
     Q_OBJECT
 
-    QML_CONST_PROPERTY(model::Meta, meta)
-    QML_CONST_PROPERTY(model::Settings, settings)
-    QML_CONST_PROPERTY(model::System, system)
-    QML_CONST_PROPERTY(model::GamepadManager, gamepad)
-    QML_CONST_PROPERTY(model::ScannerState, scanner)
-    QML_CONST_PROPERTY(model::LogModel, log)
+    Q_PROPERTY(QStringList messages READ messages NOTIFY messagesChanged)
+    Q_PROPERTY(int count READ count NOTIFY messagesChanged)
 
 public:
-    explicit Internal(const backend::CliArgs& args, QObject* parent = nullptr);
+    explicit LogModel(QObject* parent = nullptr);
+
+    QStringList messages() const;
+    int count() const;
+
+    void addMessage(const QString& msg);
+
+public slots:
+    void clear();
+
+signals:
+    void messagesChanged();
+
+private:
+    QStringList m_messages;
 };
 } // namespace model

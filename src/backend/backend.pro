@@ -15,6 +15,7 @@ msvc: DEFINES *= _USE_MATH_DEFINES
 SOURCES += \
     Backend.cpp \
     FrontendLayer.cpp \
+    ModelLogSink.cpp \
     PegasusAssets.cpp \
     ProcessLauncher.cpp \
     ScriptRunner.cpp \
@@ -26,6 +27,7 @@ HEADERS += \
     Backend.h \
     CliArgs.h \
     FrontendLayer.h \
+    ModelLogSink.h \
     PegasusAssets.h \
     ProcessLauncher.h \
     ScriptRunner.h \
