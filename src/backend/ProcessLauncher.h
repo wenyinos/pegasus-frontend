@@ -71,7 +71,6 @@ private:
     QString m_cached_rom_path;
 
     QString cacheRomPath(const QString& originalPath);
-    bool checkDiskSpace(const QString& dir, qint64 requiredSize);
     bool copyFileWithProgress(const QString& src, const QString& dst);
     void cleanCache();
 #endif

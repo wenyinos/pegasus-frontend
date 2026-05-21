@@ -28,7 +28,6 @@
 #ifdef Q_OS_ANDROID
 #include "platform/AndroidHelpers.h"
 #include <QCoreApplication>
-#include <QStorageInfo>
 #endif
 
 #include <QDir>
@@ -182,19 +181,8 @@ void ProcessLauncher::onLaunchRequested(const model::GameFile* q_gamefile)
     const QString rom_path = gamefile.fileinfo().absoluteFilePath();
     const QString cached_path = cacheRomPath(rom_path);
 
-    // Ensure cache directory exists before checking space
-    QDir().mkpath(QFileInfo(cached_path).absolutePath());
-
-    const qint64 rom_size = gamefile.fileinfo().size();
-    if (!checkDiskSpace(QFileInfo(cached_path).absolutePath(), rom_size)) {
-        const QString message = LOGMSG("Not enough disk space to cache ROM file");
-        Log::warning(message);
-        emit copyError(message);
-        return;
-    }
-
     if (!copyFileWithProgress(rom_path, cached_path)) {
-        const QString message = LOGMSG("Failed to copy ROM file to cache");
+        const QString message = LOGMSG("Failed to copy ROM file to cache: %1").arg(rom_path);
         Log::warning(message);
         emit copyError(message);
         return;
@@ -382,16 +370,6 @@ QString ProcessLauncher::cacheRomPath(const QString& originalPath)
     const QString relative_path = storage_dir.relativeFilePath(originalPath);
     const QString cache_base = storage_root + QStringLiteral("/pegasus-frontend/copyRoms");
     return cache_base + QStringLiteral("/") + relative_path;
-}
-
-bool ProcessLauncher::checkDiskSpace(const QString& dir, qint64 requiredSize)
-{
-    QStorageInfo storage(dir);
-    if (!storage.isValid() || !storage.isReady())
-        return false;
-    // Reserve 50MB headroom
-    constexpr qint64 HEADROOM = 50 * 1024 * 1024;
-    return storage.bytesAvailable() > (requiredSize + HEADROOM);
 }
 
 bool ProcessLauncher::copyFileWithProgress(const QString& src, const QString& dst)
